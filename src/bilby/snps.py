@@ -23,7 +23,7 @@ from dna import ensemble_fwd_rev
 
 def score_snps(config, vars_file, vcf_file, worker_index, options):
     """
-    Score SNPs in a VCF file with a xolo DNA->tracks model.
+    Score SNPs in a VCF file with a bilby DNA->tracks model.
 
     :param vars_file: Saved model weights
     :param vcf_file: VCF

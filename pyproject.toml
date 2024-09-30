@@ -1,5 +1,5 @@
 [project]
-name = "xolo"
+name = "bilby"
 version = "1.0.0"
 dependencies = [
     "jax >= 0.4.14",
