@@ -13,6 +13,4 @@ LOG
 Untitled.ipynb
 .ipynb_checkpoints/Untitled-checkpoint.ipynb
 .DS_Store
-scan/hyena_norms.csv
-scan/*.pdf
 src/bilby.egg-info
