@@ -1,7 +1,6 @@
 *.pkl
 *.prof
 build/
-src/xolo.egg-info
 scan/config
 scan/device
 scan/foldseed
@@ -16,3 +15,4 @@ Untitled.ipynb
 .DS_Store
 scan/hyena_norms.csv
 scan/*.pdf
+src/bilby.egg-info
