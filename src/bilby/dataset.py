@@ -105,6 +105,7 @@ class SeqDataset:
             # decode targets
             targets = tf.io.decode_raw(parsed_features[TFR_OUTPUT], tf.float16)
             if not raw:
+                targets = tf.reshape(targets, [self.target_length, self.num_targets])
                 targets = tf.cast(targets, tf.float32)
 
             return sequence, targets

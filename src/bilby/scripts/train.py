@@ -155,7 +155,7 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     gitDir = os.path.dirname(__file__) + '/../../../.git'
     with open(f"{gitDir}/HEAD") as headfile:
         head = headfile.readline().strip()
-        p = re.compile('ref: (\S+)')
+        p = re.compile('ref: (\\S+)')
         m = p.match(head)
         if m:
             with open(f"{gitDir}/{m.group(1)}") as ref:

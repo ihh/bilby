@@ -163,8 +163,9 @@ class TrainLogger():
             logging.warning('Device memory stats:')
             for i,d in enumerate(jax.devices()):
                 m = d.memory_stats()
-                for x in m.keys():
-                    logging.warning(f"device {i}: {x} {m[x]}")
+                if m is not None:
+                    for x in m.keys():
+                        logging.warning(f"device {i}: {x} {m[x]}")
 
 
 def train_step (state, loss_fn, x, y):
