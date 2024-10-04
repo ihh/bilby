@@ -59,29 +59,12 @@ def stochastic_revcomp (prng, seq, out, strand_pair, max_shift=0):
     out = jnp.where (revcomp, out[::-1,strand_pair], out)
     return seq, out, revcomp, shift
 
-# bda has the form (batch_id,donor_bin,acceptor_bin)
-def revcomp_xxj_coords (bda, out_len):
-    return jnp.array ([bda[0], out_len-1-bda[1], out_len-1-bda[2]])
-
-# xxj_counts has the form (forward#1,reverse#1,forward#2,reverse#2,...)
-def revcomp_xxj_counts (xxj_counts):
-    return jnp.stack ([xxj_counts[1::2], xxj_counts[0::2]], axis=-1).reshape((-1,))
-
 # As stochastic_revcomp, but assumes additional leading axis is index within batch
-# xxj_coords has shape (num_xxj_sites,3) with each row having the form (batch_id,donor_bin,acceptor_bin)
-# xxj_counts has shape (num_xxj_sites,num_tracks) with strand-paired tracks in adjacent positions (0=forward#1, 1=reverse#1, 2=forward#2, 3=reverse#2, ...)
-def stochastic_revcomp_batch (prng, seq_batch, out_batch, strand_pair, xxj_coords, xxj_counts, max_shift=0):
+def stochastic_revcomp_batch (prng, seq_batch, out_batch, strand_pair, max_shift=0):
     seq_out_revcomp_shift = [stochastic_revcomp(*a,strand_pair,max_shift=max_shift) for a in zip (jax.random.split (prng, seq_batch.shape[0]), seq_batch, out_batch)]
     out_len = out_batch.shape[1]
     revcomp_batch = jnp.array ([sors[2] for sors in seq_out_revcomp_shift], dtype=jnp.bool_)
-    if xxj_coords.shape[0] > 0:
-        xxj_coords_batch = xxj_coords[:,0]
-        xxj_coords_revcomp = revcomp_batch[xxj_coords_batch]
-        xxj_coords = jnp.stack ([jnp.where (xxj_coords_revcomp[i], revcomp_xxj_coords(xxj_coords[i,:],out_len), xxj_coords[i,:])
-                                 for i in range(xxj_coords.shape[0])], axis=0)
-        xxj_counts = jnp.stack ([jnp.where (xxj_coords_revcomp[i], revcomp_xxj_counts(xxj_counts[i,:]), xxj_counts[i,:])
-                                 for i in range(xxj_counts.shape[0])], axis=0)
-    return tuple (jnp.array([sors[i] for sors in seq_out_revcomp_shift]) for i in range(4)) + (xxj_coords, xxj_counts)
+    return tuple (jnp.array([sors[i] for sors in seq_out_revcomp_shift]) for i in range(4))
 
 # Shift DNA, padding with 1/4 at the end
 def shift_dna (seq, shift):

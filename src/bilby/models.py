@@ -11,7 +11,6 @@ from hyena import HyenaNac
 from selectssm import BidirectionalMamba
 from transformer import TransNao, EnformerMultiHeadAttention
 from multires import MultiResBlock
-from xxj import JunctionCountsModel
 
 # DRK's params_conv.json example (some params hard-coded):
 class DRKTrunk(nn.Module):
@@ -545,54 +544,6 @@ class DRKMulti(nn.Module):
 
 
 
-class DRKXXJ(nn.Module):
-    features: int = None
-    xxj_features: int = None
-    crop: int = 2048
-
-    mamba_features: int = 768
-    mamba_expansion_factor: int = 0.75
-    ssm_hidden_features: int = 8
-    bn_momentum: float = 0.9
-    mamba_layers: int = 6
-
-    mamba_args: dict = field(default_factory=dict)
-    xxj_args: dict = field(default_factory=dict)
-    diagnostics: dict = field(default_factory=dict)
-
-    norm_type: str = "layer"
-    trunk_norm_type: str = "layer"
-
-    # x has shape (B,L,I)
-    # xxj_sparse has shape (N,4) where each row has the form (b,t,d,a) where b=batch, t=target, d=donor bin, a=acceptor bin
-    @nn.compact
-    def __call__(self, x, xxj_sparse, train: bool = False):
-
-        trunk = nn.checkpoint(DRKTrunk, static_argnums=(2,))
-        x = trunk(features=self.mamba_features, norm_type=self.trunk_norm_type) (x, train, diagnostics=self.diagnostics)
-
-        for _n in jnp.arange(self.mamba_layers):
-            mamba = nn.checkpoint(BidirectionalMamba, static_argnums=(2,))
-            x = mamba( hidden_features=self.ssm_hidden_features,
-                        expansion_factor=self.mamba_expansion_factor,
-                        norm_type=self.norm_type,
-                        bn_momentum=self.bn_momentum,
-                        diagnostics=self.diagnostics, 
-                        concatenate_fwd_rev=False,
-                        tie_in_proj=True,
-                        **self.mamba_args,
-                        ) (x, train)
-
-        x = crop_ends (x, self.crop)
-
-        y = nn.gelu(x)
-        final = nn.checkpoint(Final)
-        y = final(units=self.features, activation="softplus") (x)
-
-        jcmodel = nn.checkpoint(JunctionCountsModel, static_argnums=(3,))
-        xxj = jcmodel(features=self.xxj_features, diagnostics=self.diagnostics, **self.xxj_args) (x, xxj_sparse, train)
-
-        return y, xxj
 
 models = { 'testcnn': { "new_model": TestCNN, "seq_len": 393216, "targets_length": 8192 },
            'drkcnn': { "new_model": DRKCNN, "seq_len": 393216, "targets_length": 8192 },
@@ -601,6 +552,5 @@ models = { 'testcnn': { "new_model": TestCNN, "seq_len": 393216, "targets_length
            'drkmamba': { "new_model": DRKMamba, "seq_len": 393216, "targets_length": 8192 },
            'drkmulti': { "new_model": DRKMulti, "seq_len": 393216, "targets_length": 8192 },
            'stripedhyena': { "new_model": StripedHyena, "seq_len": 393216, "targets_length": 8192 },
-           'stripedmamba': { "new_model": StripedMamba, "seq_len": 393216, "targets_length": 8192 },
-           'drkxxj': { "new_model": DRKXXJ, "seq_len": 393216, "targets_length": 8192, "predicts_xxj": True },
+           'stripedmamba': { "new_model": StripedMamba, "seq_len": 393216, "targets_length": 8192 }
          }

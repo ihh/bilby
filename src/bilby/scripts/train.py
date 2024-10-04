@@ -40,9 +40,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
          model_args: dict = {},
          poisson: bool = False,
          poisson_weight: float = 0.2,
-         xxj_loss_weight: float = 1,
-         n_junctions: int = 3,
-         predict_splicing: bool = False,
          load: str = None,
          save: str = None,
          tabulate: bool = False,
@@ -95,9 +92,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
         model_args: specify model arguments (JSON-formatted object)
         poisson: use Poisson loss rather than Poisson-multinomial loss
         poisson_weight: relative weight of Poisson term in Poisson-multinomial loss
-        xxj_loss_weight: relative weight of XXJ (exon-exon junction) loss term
-        n_junctions: number of junctions per track to use for XXJ training and validation
-        predict_splicing: regardless of whether model predicts XXJ's, use model to predict donor/acceptor site usage
         load: load initial parameters
         save: save final parameters (and load from this file if available)
         tabulate: show model layers as table, then stop
@@ -172,19 +166,17 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     jax.config.update("jax_log_compiles", jax_log_compiles)
 
     # load datasets
-    # if model takes sparse exon-exon junctions as input, we need to restrict batch size to 1 in test/validation sets as a workaround for the ragged tensor sizes
     # for the training set we always use batch size 1, since we use the round-robin iterator to mix batches across datasets
     model_info = models[model_name]
-    model_predicts_xxj = model_info.get('predicts_xxj',False)
-
+    
     logging.warning('loading datasets from {}'.format(data_dir))
-    train = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1, add_splice_sites=predict_splicing) for label in train]
-    valid = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1, add_splice_sites=predict_splicing) for label in valid]
-    test = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1, add_splice_sites=predict_splicing) for label in test]
+    train = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1) for label in train]
+    valid = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1) for label in valid]
+    test = [SeqDataset (data_dir=data_dir, split_label=label, batch_size=1) for label in test]
 
     # figure out data shape
     representative = (train + valid + test)[0]
-    seq_length, seq_depth, target_length, n_targets, n_xxj_targets = representative.seq_length, representative.seq_depth, representative.target_length, representative.num_targets, representative.num_xxj_targets
+    seq_length, seq_depth, target_length, n_targets = representative.seq_length, representative.seq_depth, representative.target_length, representative.num_targets
     logging.warning(f"seq_length={seq_length}, seq_depth={seq_depth}, target_length={target_length}, n_targets={n_targets}")
 
     # create RNGs
@@ -198,24 +190,19 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     logging.warning (f"counted {n_valid_batches} validation and {n_train_batches} training batches")
 
     # initialize the model
-    if model_predicts_xxj:
-        model_args['xxj_features'] = n_xxj_targets
     conv_net = model_info["new_model"](features=n_targets, **{**model_info.get("init_args",{}), **model_args})
 
     if tabulate:
         dummy_x = jnp.ones((1, seq_length, seq_depth))
-        dummy_xxj_sparse = [jnp.zeros((0,4),dtype=jnp.uint16)] if model_predicts_xxj else []
-        logging.warning(conv_net.tabulate(prng, dummy_x, *dummy_xxj_sparse, train=False))
+        logging.warning(conv_net.tabulate(prng, dummy_x, train=False))
         sys.exit()
 
     # Loss function(s)
     poisson_mn = lambda y_pred, y_true: poisson_multinomial_loss(y_pred,y_true,total_weight=poisson_weight)
     loss_fn = poisson_loss if poisson else poisson_mn
-    xxj_loss_fn = weighted_poisson_loss if model_predicts_xxj else None
-    xxj_loss_weight = 1 / (1 + n_targets / (xxj_loss_weight * n_xxj_targets))
-
+    
     # Parameters
-    init_vars = init_params (prng=init_rng, model=conv_net, filename=load or save, seq_length=seq_length, seq_depth=seq_depth, model_predicts_xxj=model_predicts_xxj)
+    init_vars = init_params (prng=init_rng, model=conv_net, filename=load or save, seq_length=seq_length, seq_depth=seq_depth)
     logging.warning(f"model has {sum([a.size for a in jax.tree_util.tree_leaves(init_vars)])} parameters")
 
     if eval:
@@ -227,7 +214,7 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
             apply_fn = ensemble_fwd_rev(apply_fn, test[0].strand_pair)
         if shift_ensemble_eval:
             apply_fn = ensemble_shift(apply_fn, max_shift)
-        compute_metrics = Metrics (apply_fn, loss_fn, xxj_loss_fn, xxj_loss_weight=xxj_loss_weight, use_jit=not disable_jit, n_xxj_targets=n_xxj_targets, top_n_per_track=n_junctions)
+        compute_metrics = Metrics (apply_fn, loss_fn, use_jit=not disable_jit)
         test_metrics = compute_metrics(init_vars,test_iter,n_batches=n_test_batches,fold_name="test",return_per_feature_metrics=True,warn_if_zero=False)
         with open(eval, 'w') as f:
             f.write (json.dumps(test_metrics))
@@ -240,7 +227,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     apply_fn = conv_net.apply,
     params = init_vars['params'],
     batch_stats = init_vars.get('batch_stats',{}),
-    n_xxj_targets = n_xxj_targets,
     max_shift = max_shift,
     max_epochs = max_epochs,
     max_seconds = max_seconds,
@@ -285,10 +271,9 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
 
     # Run it
     run_training_loop(state=state,tlog=tlog,
-                      loss_fn=loss_fn, xxj_loss_fn=xxj_loss_fn, xxj_loss_weight=xxj_loss_weight,
+                      loss_fn=loss_fn,
                       valid_iter=valid_iter,train_iter=train_iter,
                       n_valid_batches=n_valid_batches,n_train_batches=n_train_batches,
-                      top_n_per_track=n_junctions,
                       recompute_train_metrics=recompute_train_loss,
                       use_jit=not disable_jit,
                       use_threads=use_threads,

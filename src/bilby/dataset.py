@@ -18,9 +18,6 @@ import logging
 # TFRecord constants
 TFR_INPUT = 'sequence'
 TFR_OUTPUT = 'target'
-TFR_JUNCTION_COORDS = 'junction_coords'
-TFR_JUNCTION_COUNTS = 'junction_counts'
-TFR_WINDOW_ID = 'window_id'
 
 # Prevent Tensorflow from grabbing GPU memory
 tf.config.experimental.set_visible_devices([], "GPU")
@@ -42,7 +39,7 @@ def get_orientation_type(identifier):
     return 0
 
 class SeqDataset:
-    def __init__(self, data_dir='data', split_label='train', batch_size=2, shuffle_buffer=128, seq_length_crop=None, mode='eval', drop_remainder=False, add_splice_sites=False):
+    def __init__(self, data_dir='data', split_label='train', batch_size=2, shuffle_buffer=128, seq_length_crop=None, mode='eval', drop_remainder=False):
         self.data_dir = data_dir
         self.split_label = split_label
         self.batch_size = batch_size
@@ -50,8 +47,7 @@ class SeqDataset:
         self.seq_length_crop = seq_length_crop
         self.mode = mode
         self.drop_remainder = drop_remainder
-        self.add_splice_sites = add_splice_sites
-
+        
         data_stats_file = '%s/statistics.json' % self.data_dir
         with open(data_stats_file) as data_stats_open:
             data_stats = json.load(data_stats_open)
@@ -61,7 +57,6 @@ class SeqDataset:
         self.seq_1hot = data_stats.get('seq_1hot', False)
         self.target_length = data_stats['target_length']
         self.num_targets = data_stats['num_targets']
-        self.num_xxj_targets = data_stats['num_xxj_targets']
         self.pool_width = data_stats['pool_width']
 
         self.tfr_path = '%s/tfrecords/%s-*.tfr' % (self.data_dir, self.split_label)
@@ -73,15 +68,10 @@ class SeqDataset:
             id_index, strand_pair_index, description_index = [targets_header.split('\t').index(col) for col in ['identifier', 'strand_pair', 'description']]
             self.strand_pair = [int(line.split('\t')[strand_pair_index]) for line in targets]
             assert len(self.strand_pair) == self.num_targets
-            if self.add_splice_sites:
-                self.strand_pair += sum([[2*k+1+self.num_targets,2*k+self.num_targets] for k in range(self.num_xxj_targets)], [])
             target_type_str = [get_target_type(line.split('\t')[description_index]) for line in targets]
             self.target_type_name = list(set(target_type_str))
             self.target_type = [self.target_type_name.index(t) for t in target_type_str]
             self.orientation_type = [get_orientation_type(line.split('\t')[id_index]) for line in targets]
-
-        if self.add_splice_sites:
-            self.num_targets += 2*self.num_xxj_targets
 
         self.make_dataset()
 
@@ -93,9 +83,6 @@ class SeqDataset:
             features = {
                 TFR_INPUT: tf.io.FixedLenFeature([], tf.string),
                 TFR_OUTPUT: tf.io.FixedLenFeature([], tf.string),
-                TFR_JUNCTION_COORDS: tf.io.FixedLenFeature([], tf.string),
-                TFR_JUNCTION_COUNTS: tf.io.FixedLenFeature([], tf.string),
-                TFR_WINDOW_ID: tf.io.FixedLenFeature([], tf.string),
             }
 
             # parse example into features
@@ -118,17 +105,9 @@ class SeqDataset:
             # decode targets
             targets = tf.io.decode_raw(parsed_features[TFR_OUTPUT], tf.float16)
             if not raw:
-                # avert your eyes from this horrible hack
-                num_targets_before_splice_sites_added = self.num_targets - 2*self.num_xxj_targets if self.add_splice_sites else self.num_targets
-                targets = tf.reshape(targets, [self.target_length, num_targets_before_splice_sites_added])
                 targets = tf.cast(targets, tf.float32)
 
-            # decode junction coords
-            xxj_coords = tf.io.decode_raw(parsed_features[TFR_JUNCTION_COORDS], tf.int16)
-            xxj_coords = tf.reshape(xxj_coords, [-1, 3])
-            xxj_counts = tf.io.decode_raw(parsed_features[TFR_JUNCTION_COUNTS], tf.float16)
-
-            return sequence, targets, xxj_coords, xxj_counts
+            return sequence, targets
 
         return parse_proto
 

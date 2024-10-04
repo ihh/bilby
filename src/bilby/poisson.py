@@ -52,10 +52,7 @@ def weighted_poisson_loss (y_pred, y_true, weight, epsilon=epsilon):
 
 def compute_xy_moments (x, y, weights=None, warn_if_zero=True):   # conventionally x=pred, y=true
     assert x.shape == y.shape, f"shape of predicted values {x.shape} != shape of true values {y.shape}"
-    if x.ndim > 1:
-        axis = tuple(range(x.ndim - 1))  # shape of x,y is (batches, bins, features); we want to keep features
-    else:
-        axis = None  # x is a single vector, so we assume it has been flattened (e.g. a sparse matrix of exon-exon junction coords) and just sum over everything
+    axis = tuple(range(x.ndim - 1))  # shape of x,y is (batches, bins, features); we want to keep features
     if weights is not None:
         x = x * weights
         y = y * weights
