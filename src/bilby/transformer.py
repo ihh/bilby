@@ -29,7 +29,7 @@ Array = Any
 # Avsec et al, Nature Methods, 2021
 class EnformerDotProductSelfAttention(nn.Module):
     use_flash_attention: bool = False
-    use_rope: bool = False
+    positional_encoding: str = "enformer"  # "enformer", "rope", or "none"
     pos_emb_dim: int = None
 
     @nn.compact
@@ -49,13 +49,14 @@ class EnformerDotProductSelfAttention(nn.Module):
         num_heads = query.shape[-2]
         qk_depth = query.shape[-1]
 
-        if self.use_rope:
-          rope = RoPE (dim=qk_depth, num_heads=num_heads, freqs_init=freqs_lang(seq_length))
-          pos = jnp.arange(seq_length)[None,:]  # (1,L)
-          #print(f"Shapes before applying RoPE: query={query.shape}, key={key.shape}, pos={pos.shape}")
-          query = rope (query, pos)
-          key = rope (key, pos)
-          #print(f"Shapes after applying RoPE: query={query.shape}, key={key.shape}, value={value.shape}")
+        if self.positional_encoding == "rope" or self.positional_encoding == "none":
+          if self.positional_encoding == "rope":
+            rope = RoPE (dim=qk_depth, num_heads=num_heads, freqs_init=freqs_lang(seq_length))
+            pos = jnp.arange(seq_length)[None,:]  # (1,L)
+            #print(f"Shapes before applying RoPE: query={query.shape}, key={key.shape}, pos={pos.shape}")
+            query = rope (query, pos)
+            key = rope (key, pos)
+            #print(f"Shapes after applying RoPE: query={query.shape}, key={key.shape}, value={value.shape}")
           if self.use_flash_attention:
             return flash_attention (query, key, value)
           else:
@@ -311,7 +312,7 @@ class TransNao(nn.Module):
     diagnostics: dict = field(default_factory=dict)
 
     use_flash_attention: bool = False
-    use_rope: bool = False
+    positional_encoding: str = "none"
 
     @nn.compact
     def __call__(self, x, train: bool = False):
@@ -353,7 +354,7 @@ class TransNao(nn.Module):
             out_features=self.transformer_features,
             dropout_rate=self.dropout_rate,
             kernel_init=nn.initializers.he_normal(),
-            attention_fn=EnformerDotProductSelfAttention (pos_emb_dim=self.pos_emb_dim, use_flash_attention=self.use_flash_attention, use_rope=self.use_rope),
+            attention_fn=EnformerDotProductSelfAttention (pos_emb_dim=self.pos_emb_dim, use_flash_attention=self.use_flash_attention, positional_encoding=self.positional_encoding),
             **self.transformer_args,
         ) (x, not train)
 

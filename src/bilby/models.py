@@ -188,7 +188,8 @@ class DRKTransformer(nn.Module):
     checkpoint_trans: bool = False
     checkpoint_nao: bool = False
 
-    use_flash_attention: bool = False
+    use_flash_attention: bool = True
+    positional_encoding: str = "none"
 
     diagnostics: dict = field(default_factory=dict)
 
@@ -241,6 +242,7 @@ class DRKTransformer(nn.Module):
                             checkpoint_trans=self.checkpoint_trans,
                             diagnostics=self.diagnostics,
                             use_flash_attention=self.use_flash_attention,
+                            positional_encoding=self.positional_encoding,
                             **self.transformer_args,
                             ) (x, train)
 
@@ -295,6 +297,8 @@ class StripedHyena(nn.Module):
     checkpoint_nac: bool = False
     checkpoint_trans: bool = False
     checkpoint_nao: bool = False
+
+    positional_encoding: str = "rope"
 
     nac_args: dict = field(default_factory=dict)
 
@@ -351,6 +355,7 @@ class StripedHyena(nn.Module):
                             activation=self.activation,
                             checkpoint_trans=self.checkpoint_trans,
                             diagnostics=self.diagnostics,
+                            positional_encoding=self.positional_encoding,
                             use_flash_attention=True,
                             **self.transformer_args,
                             ) (x_pooled, train)
@@ -390,7 +395,7 @@ class StripedMamba(nn.Module):
     ssm_hidden_features: int = 8
     bn_momentum: float = 0.9
     mamba_layers: int = 3  # per transformer layer
-    use_rope: bool = False
+    positional_encoding: str = "enformer"
 
     trans_pool_size: int = 4
     key_size: int = 64
@@ -451,7 +456,7 @@ class StripedMamba(nn.Module):
                             checkpoint_trans=self.checkpoint_trans,
                             diagnostics=self.diagnostics,
                             use_flash_attention=True,
-                            use_rope=self.use_rope,
+                            positional_encoding=self.positional_encoding,
                             **self.transformer_args,
                             ) (x_pooled, train)
 
