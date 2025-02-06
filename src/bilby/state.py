@@ -30,6 +30,9 @@ import tensorflow as tf
 from dna import stochastic_revcomp_batch
 from poisson import compute_xy_moments, zero_xy_moments, pearson_r, r_squared
 
+# TODO: most of these class variables can be moved to arguments of the run_training_loop function,
+# and the rest of them should be instance variables (so they can be serialized at checkpoints).
+# See here for tips on how to serialize https://github.com/google-deepmind/optax/discussions/180
 class TrainState(train_state.TrainState):
     revcomp_prng: jax.Array
     dropout_prng: jax.Array
@@ -196,7 +199,17 @@ def train_step (state, loss_fn, x, y):
                             batch_stats = out_vars['batch_stats'])
     return loss, state
 
-def run_training_loop(state: TrainState, tlog: TrainLogger, loss_fn, valid_iter, train_iter, n_valid_batches, n_train_batches, recompute_train_metrics=False, use_jit=True, use_threads=False, use_tracemalloc=False):
+def run_training_loop(state: TrainState,
+                      tlog: TrainLogger,
+                      loss_fn, 
+                      valid_iter, 
+                      train_iter, 
+                      n_valid_batches, 
+                      n_train_batches, 
+                      recompute_train_metrics=False, 
+                      use_jit=True, 
+                      use_threads=False, 
+                      use_tracemalloc=False):
     if use_tracemalloc:
         tracemalloc.start()
 
