@@ -55,7 +55,7 @@ class DRKHead(nn.Module):
         return x
 
 class DRKCNN(nn.Module):
-    trunk_feature_scale: int = 1
+    trunk_feature_scale: float = 1
     features: int = None
     crop: int = 2048
     equivariant: str = "none"  # "none", "weak", "strict"
