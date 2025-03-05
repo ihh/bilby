@@ -30,24 +30,10 @@ import tensorflow as tf
 from dna import stochastic_revcomp_batch
 from poisson import compute_xy_moments, zero_xy_moments, pearson_r, r_squared
 
-# TODO: most of these class variables can be moved to arguments of the run_training_loop function,
-# and the rest of them should be instance variables (so they can be serialized at checkpoints).
+# TODO: Serialize at checkpoints, deserialize at start of training
 # See here for tips on how to serialize https://github.com/google-deepmind/optax/discussions/180
 class TrainState(train_state.TrainState):
-    revcomp_prng: jax.Array
-    dropout_prng: jax.Array
-    strand_pair: jax.Array
-    max_shift: int = 0
-    max_epochs: int = None
-    max_seconds: int = None
-    prevalidate: bool = False
-    patience: int = None
     batch_stats: dict = field(default_factory=dict)
-    last_y_pred: any = None
-    last_grads: any = None
-    last_diagnostics: any = None
-    last_pearsonR_moments: any = None
-    last_losses: any = None
 
     def vars (self):
         return { 'params': self.params,
@@ -74,6 +60,12 @@ class TrainLogger():
         self.global_clip = global_clip
         self.block_clip = block_clip
         self.memory_stats = memory_stats
+
+        self.last_y_pred = None
+        self.last_grads = None
+        self.last_diagnostics = None
+        self.last_pearsonR_moments = None
+        self.last_losses = None
 
         self.summaryWriter = None
         if device_prof_dir is not None:
@@ -171,9 +163,9 @@ class TrainLogger():
                         logging.warning(f"device {i}: {x} {m[x]}")
 
 
-def train_step (state, loss_fn, x, y):
-    revcomp_prng = jax.random.fold_in (state.revcomp_prng, state.step)
-    dropout_prng = jax.random.fold_in (state.dropout_prng, state.step)
+def train_step (state, loss_fn, x, y, strand_pair, max_shift, revcomp_prng, dropout_prng):
+    revcomp_prng = jax.random.fold_in (revcomp_prng, state.step)
+    dropout_prng = jax.random.fold_in (dropout_prng, state.step)
 
     def train_loss (params, x, y_true):
         batch_size = x.shape[0]
@@ -187,7 +179,7 @@ def train_step (state, loss_fn, x, y):
     
     loss_value_and_grad = jax.value_and_grad (train_loss, has_aux=True)
 
-    x, y, _revcomp_flag, _shift = stochastic_revcomp_batch (revcomp_prng, x, y, state.strand_pair, max_shift=state.max_shift)
+    x, y, _revcomp_flag, _shift = stochastic_revcomp_batch (revcomp_prng, x, y, strand_pair, max_shift=max_shift)
     (loss, out_vars), grads = loss_value_and_grad (state.params, x, y)
     # create and return new state
     state = state.apply_gradients (grads = grads)
@@ -206,6 +198,14 @@ def run_training_loop(state: TrainState,
                       train_iter, 
                       n_valid_batches, 
                       n_train_batches, 
+                      strand_pair: jax.Array,
+                      revcomp_prng: jax.Array,
+                      dropout_prng: jax.Array,
+                      max_shift: int = 0,
+                      max_epochs: int = None,
+                      max_seconds: int = None,
+                      prevalidate: bool = False,
+                      patience: int = None,
                       recompute_train_metrics=False, 
                       use_jit=True, 
                       use_threads=False, 
@@ -219,7 +219,7 @@ def run_training_loop(state: TrainState,
     tlog.save_vars(init_vars)
 
     vmetrics_history = []
-    if state.prevalidate:
+    if prevalidate:
         vmetrics_history.append (compute_metrics(init_vars,valid_iter,n_batches=n_valid_batches,fold_name="validation"))
         logging.warning (f"Validation metrics before training: {metrics_str(vmetrics_history[-1])}")
 
@@ -230,7 +230,7 @@ def run_training_loop(state: TrainState,
     batches = 0
     epochs = init_epochs = tlog.infer_starting_epoch()
     best_vars = state.vars()
-    train_eta = ETA(n=state.max_epochs,limit=state.max_seconds)
+    train_eta = ETA(n=max_epochs,limit=max_seconds)
     while True:
         epoch_eta = ETA(n=n_train_batches)
         train_loss = 0
@@ -250,7 +250,7 @@ def run_training_loop(state: TrainState,
         def process_current_batch():
             nonlocal current_batch, state, train_loss, n_train_seqs, batches, epochs
             i, (x, y) = current_batch
-            loss, state = train_step_jit (state, loss_fn, x, y)
+            loss, state = train_step_jit (state, loss_fn, x, y, strand_pair, max_shift, revcomp_prng, dropout_prng)
             batch_size = x.shape[0]
             n_train_seqs = n_train_seqs + batch_size
             train_loss = train_loss + loss * batch_size
@@ -318,7 +318,7 @@ def run_training_loop(state: TrainState,
 
         tlog.writeMemoryStats()  # log memory stats at end of every epoch
 
-        if state.max_epochs and epochs >= state.max_epochs:
+        if max_epochs and epochs >= max_epochs:
             logging.warning ("Max epochs reached")
             break
 
@@ -327,7 +327,7 @@ def run_training_loop(state: TrainState,
         if this_is_best_epoch:
             best_vars = vars
             tlog.save_vars (best_vars)
-        elif len(vmetrics_history) - best_vr_idx > state.patience + 1:
+        elif len(vmetrics_history) - best_vr_idx > patience + 1:
             logging.warning ("Patience exceeded")
             break
 

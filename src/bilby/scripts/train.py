@@ -227,11 +227,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     apply_fn = conv_net.apply,
     params = init_vars['params'],
     batch_stats = init_vars.get('batch_stats',{}),
-    max_shift = max_shift,
-    max_epochs = max_epochs,
-    max_seconds = max_seconds,
-    prevalidate = prevalidate,
-    patience = patience,
     tx = optax.chain(
         optax.clip_by_block_rms(block_clip),  # Clip each block by RMS gradient norm
         optax.clip_by_global_norm(global_clip),  # Clip overall gradient by the global norm
@@ -240,9 +235,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
         # Scale updates by -1 since optax.apply_updates is additive and we want to descend on the loss.
         optax.scale(-1.0)
     ),
-    revcomp_prng = revcomp_prng,
-    dropout_prng = dropout_prng,
-    strand_pair = train[0].strand_pair,
     )
 
     logging.warning('creating TrainLogger')
@@ -274,6 +266,14 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
                       loss_fn=loss_fn,
                       valid_iter=valid_iter,train_iter=train_iter,
                       n_valid_batches=n_valid_batches,n_train_batches=n_train_batches,
+                      strand_pair=train[0].strand_pair,
+                      max_shift = max_shift,
+                      max_epochs = max_epochs,
+                      max_seconds = max_seconds,
+                      prevalidate = prevalidate,
+                      patience = patience,
+                      revcomp_prng = revcomp_prng,
+                      dropout_prng = dropout_prng,
                       recompute_train_metrics=recompute_train_loss,
                       use_jit=not disable_jit,
                       use_threads=use_threads,
