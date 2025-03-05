@@ -120,17 +120,17 @@ class TrainLogger():
     def writeBatchSummaries(self, state: TrainState, batch_num: int, loss: float, R: float, R2: float, batch_vars: dict):
         if batch_num % self.summary_period == 0:
             self.writeSummary (loss, path=['batch','loss'], step=batch_num)
-            self.writeSummary (batch_vars.y_pred, path=['batch','y_pred'], step=batch_num)
-            self.writeSummary (batch_vars.grads, path=['batch','grad'], step=batch_num)
-            self.writeSummary (batch_vars.diagnostics, path=['batch','diagnostics'], step=batch_num)
+            self.writeSummary (batch_vars['y_pred'], path=['batch','y_pred'], step=batch_num)
+            self.writeSummary (batch_vars['grads'], path=['batch','grad'], step=batch_num)
+            self.writeSummary (batch_vars['diagnostics'], path=['batch','diagnostics'], step=batch_num)
             self.writeSummary (R, path=['batch','R','all'], step=batch_num)
             self.writeSummary (R2, path=['batch','R2','all'], step=batch_num)
-            self.writeSummary (pearson_r(batch_vars.pearsonR_moments,keep_features=True), path=['batch','R','by_feature'], step=batch_num)
-            self.writeSummary (r_squared(batch_vars.pearsonR_moments,keep_features=True), path=['batch','R2','by_feature'], step=batch_num)
+            self.writeSummary (pearson_r(batch_vars['pearsonR_moments'],keep_features=True), path=['batch','R','by_feature'], step=batch_num)
+            self.writeSummary (r_squared(batch_vars['pearsonR_moments'],keep_features=True), path=['batch','R2','by_feature'], step=batch_num)
             if state.batch_stats:
                 self.writeSummary (state.batch_stats, path=['batch','batchnorm_stats'], step=batch_num)
             self.writeSummary (state.params, path=['batch','params'], step=batch_num)
-            self.writeSummary (batch_vars.pearsonR_moments[:,3], path=['batch','l2_outputs'], step=batch_num)
+            self.writeSummary (batch_vars['pearsonR_moments'][:,3], path=['batch','l2_outputs'], step=batch_num)
         
     def writeEpochSummaries(self, state: TrainState, epoch_num: int, vmetrics: dict, tmetrics: dict):
         self.writeSummary (vmetrics, path=['epoch','vmetrics'], step=epoch_num)
