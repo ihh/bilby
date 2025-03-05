@@ -38,11 +38,14 @@ class TrainState(train_state.TrainState):
     batch_stats: dict = field(default_factory=dict)
 
     def vars (self):
-        return { 'params': self.params,
-                 'batch_stats': self.batch_stats,
-                 'epoch': self.epoch,
+        return { 'epoch': self.epoch,
                  'step': self.step,
-                 'opt_state': self.opt_state }
+                 'opt_state': self.opt_state,
+                  **self.apply_vars() }
+
+    def apply_vars (self):
+        return { 'params': self.params,
+                 'batch_stats': self.batch_stats }
 
 class TrainLogger():
     def __init__(self, save_filename: str = None, device_prof_dir: str = None,
@@ -205,7 +208,7 @@ def run_training_loop(state: TrainState,
 
     train_step_jit = jax.jit (train_step, static_argnames=['loss_fn']) if use_jit else train_step
 
-    logging.warning (f'Initial stats:\n{stats_str(state.vars()["params"],format="{0} mean={2} sd={4} shape={6}")}')
+    logging.warning (f'Initial stats:\n{stats_str(state.params,format="{0} mean={2} sd={4} shape={6}")}')
     logging.warning('starting training loop')
     batches = 0
     best_vars = state.vars()
@@ -249,7 +252,7 @@ def run_training_loop(state: TrainState,
             aberrant_norms = "".join([f"\nLarge gradient norm for {'.'.join([k.key if type(k)==jax.tree_util.DictKey else str(k) for k in pn[0]])}: {pn[1]}" for pn in path_norms if pn[1] > tlog.block_clip])
             logging.warning (f"Epoch {state.epoch+1} batch {i+1}/{n_train_batches} (size {x.shape[0]}) loss: {loss:.6f}, r: {R:.4f}, r2: {R2:.4f}, norm(grad): {global_norm:.4f}, used {used_gb:.2f} Gb, ETA {epoch_eta(i)}{aberrant_norms}")
             if tlog.summaries or tlog.verbose:
-                logging.warning (f'Params:\n{stats_str(state.vars()["params"],format="{0} mean={2} sd={4}")}')
+                logging.warning (f'Params:\n{stats_str(state.params,format="{0} mean={2} sd={4}")}')
                 logging.warning (f'Gradients:\n{stats_str(out_vars["grads"],format="grad({0}) mean={2} sd={4} l2={1}")}')
                 if out_vars['batch_stats']:
                     logging.warning (f'Batch stats:\n{stats_str(out_vars["batch_stats"],format="batch_stats({0}) l2={1}")}')
@@ -279,7 +282,7 @@ def run_training_loop(state: TrainState,
 
         state = state.replace (epoch = state.epoch + 1)
         # compute validation loss and metrics
-        vmetrics = compute_metrics(state.vars(),valid_iter,n_batches=n_valid_batches,fold_name="validation")
+        vmetrics = compute_metrics(state.apply_vars(),valid_iter,n_batches=n_valid_batches,fold_name="validation")
         vmetrics_history.append (vmetrics)
 
         best_vr_idx = jnp.argmax(jnp.array([vm["pearson_r"] + vm["r_squared"]/4 for vm in vmetrics_history]))
@@ -289,7 +292,7 @@ def run_training_loop(state: TrainState,
         train_loss = train_loss / n_train_seqs
         tmetrics_str = ""
         if recompute_train_metrics:
-            tmetrics = compute_metrics(state.vars(),train_iter,n_batches=n_train_batches,fold_name="training")
+            tmetrics = compute_metrics(state.apply_vars(),train_iter,n_batches=n_train_batches,fold_name="training")
             tlog.writeEpochSummaries (state=state, epoch_num=state.epoch, tmetrics=tmetrics, vmetrics=vmetrics)
             tmetrics_str = f"recomputed training {metrics_str(tmetrics)}, "
 
@@ -348,6 +351,7 @@ class Metrics:
         self.device_prof_dir = device_prof_dir
         
     def __call__ (self, vars, iter, n_batches, fold_name, device_memory_profile_prefix=None, return_per_feature_metrics=False, return_per_seq_metrics=False, warn_if_zero=True):
+        vars = { 'params': vars['params'], 'batch_stats': vars['batch_stats'] }  # we only want to pass params and batch_stats to apply_fn, not the full train state
         eta = ETA(n=n_batches)
         loss = 0
         n_train_seqs = 0
