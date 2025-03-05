@@ -227,7 +227,6 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     apply_fn = conv_net.apply,
     params = init_vars['params'],
     batch_stats = init_vars.get('batch_stats',{}),
-    step = init_vars.get('step',0),
     epoch = init_vars.get('epoch',0),
     tx = optax.chain(
         optax.clip_by_block_rms(block_clip),  # Clip each block by RMS gradient norm
@@ -238,6 +237,8 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
         optax.scale(-1.0)
     ),
     )
+    if init_vars.get('step'):
+        state = state.replace(step=init_vars['step'])
     if init_vars.get('opt_state'):
         state = state.replace(opt_state=init_vars['opt_state'])
 
