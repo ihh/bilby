@@ -204,7 +204,7 @@ def run_training_loop(state: TrainState,
 
     train_step_jit = jax.jit (train_step, static_argnames=['loss_fn']) if use_jit else train_step
 
-    logging.warning (f'Initial stats:\n{stats_str(state.vars()['params'],format="{0} mean={2} sd={4} shape={6}")}')
+    logging.warning (f'Initial stats:\n{stats_str(state.vars()["params"],format="{0} mean={2} sd={4} shape={6}")}')
     logging.warning('starting training loop')
     batches = 0
     best_vars = state.vars()
@@ -248,7 +248,7 @@ def run_training_loop(state: TrainState,
             aberrant_norms = "".join([f"\nLarge gradient norm for {'.'.join([k.key if type(k)==jax.tree_util.DictKey else str(k) for k in pn[0]])}: {pn[1]}" for pn in path_norms if pn[1] > tlog.block_clip])
             logging.warning (f"Epoch {state.epoch+1} batch {i+1}/{n_train_batches} (size {x.shape[0]}) loss: {loss:.6f}, r: {R:.4f}, r2: {R2:.4f}, norm(grad): {global_norm:.4f}, used {used_gb:.2f} Gb, ETA {epoch_eta(i)}{aberrant_norms}")
             if tlog.summaries or tlog.verbose:
-                logging.warning (f'Params:\n{stats_str(state.vars()['params'],format="{0} mean={2} sd={4}")}')
+                logging.warning (f'Params:\n{stats_str(state.vars()["params"],format="{0} mean={2} sd={4}")}')
                 logging.warning (f'Gradients:\n{stats_str(out_vars.last_grads,format="grad({0}) mean={2} sd={4} l2={1}")}')
                 if out_vars.batch_stats:
                     logging.warning (f'Batch stats:\n{stats_str(out_vars.batch_stats,format="batch_stats({0}) l2={1}")}')
