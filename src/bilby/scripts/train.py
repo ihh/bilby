@@ -203,7 +203,7 @@ def main(data_dir: str = os.path.dirname(__file__)+'/../../../data',
     
     # Parameters
     init_vars = init_params (prng=init_rng, model=conv_net, filename=load or save, seq_length=seq_length, seq_depth=seq_depth)
-    logging.warning(f"model has {sum([a.size for a in jax.tree_util.tree_leaves(init_vars)])} parameters")
+    logging.warning(f"model has {sum([a.size for a in jax.tree_util.tree_leaves(init_vars['params'])])} parameters")
 
     if eval:
         logging.warning('computing test set metrics')
