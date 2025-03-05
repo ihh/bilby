@@ -33,7 +33,17 @@ from poisson import compute_xy_moments, zero_xy_moments, pearson_r, r_squared
 # TODO: Serialize at checkpoints, deserialize at start of training
 # See here for tips on how to serialize https://github.com/google-deepmind/optax/discussions/180
 class TrainState(train_state.TrainState):
+    # NB declaring member variables as class variables is a flax pattern to ensure correct PyTree registration
+
+    # batch_stats must be serialized/deserialized along with params
     batch_stats: dict = field(default_factory=dict)
+
+    # the following class variables are just for logging/debugging, they don't need to be serialized/deserialized
+    last_y_pred: Any = None
+    last_grads: Any = None
+    last_diagnostics: Any = None
+    last_pearsonR_moments: Any = None
+    last_losses: Any = None
 
     def vars (self):
         return { 'params': self.params,
@@ -60,12 +70,6 @@ class TrainLogger():
         self.global_clip = global_clip
         self.block_clip = block_clip
         self.memory_stats = memory_stats
-
-        self.last_y_pred = None
-        self.last_grads = None
-        self.last_diagnostics = None
-        self.last_pearsonR_moments = None
-        self.last_losses = None
 
         self.summaryWriter = None
         if device_prof_dir is not None:
