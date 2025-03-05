@@ -30,25 +30,19 @@ import tensorflow as tf
 from dna import stochastic_revcomp_batch
 from poisson import compute_xy_moments, zero_xy_moments, pearson_r, r_squared
 
-# TODO: Serialize at checkpoints, deserialize at start of training
-# See here for tips on how to serialize https://github.com/google-deepmind/optax/discussions/180
 class TrainState(train_state.TrainState):
     # NB declaring member variables as class variables is a flax pattern to ensure correct PyTree registration
+    epoch: int = 0
 
     # batch_stats must be serialized/deserialized along with params
     batch_stats: dict = field(default_factory=dict)
 
-    # the following class variables are just for logging/debugging, they don't need to be serialized/deserialized
-    last_y_pred: any = None
-    last_grads: any = None
-    last_diagnostics: any = None
-    last_pearsonR_moments: any = None
-    last_losses: any = None
-
     def vars (self):
         return { 'params': self.params,
-                 'batch_stats': self.batch_stats }
-
+                 'batch_stats': self.batch_stats,
+                 'epoch': self.epoch,
+                 'step': self.step,
+                 'opt_state': self.opt_state }
 
 class TrainLogger():
     def __init__(self, save_filename: str = None, device_prof_dir: str = None,
@@ -85,25 +79,11 @@ class TrainLogger():
         if self.trace_prof_dir is not None:
             jax.profiler.stop_trace()
 
-    def make_save_filename (self, epoch = None):
-        filename = self.save_filename
-        if epoch is not None:
-            filename = f"{filename}.ep{epoch}"
-        return filename
-
-    def save_vars (self, vars, epoch = None):
+    def save_vars (self, vars, best = False):
         if self.save_filename is not None:
-            filename = self.make_save_filename(epoch)
-            with open (filename, mode="wb") as f:
+            with open (self.save_filename + (".best" if best else ""), mode="wb") as f:
                 pickle.dump (vars, f)
                 f.close()
-
-    def infer_starting_epoch (self):
-        epoch = 0
-        if self.save_filename is not None:
-            while os.path.isfile(self.make_save_filename(epoch+1)):
-                epoch = epoch + 1
-        return epoch
 
     def writeSummary(self,d,path=[],**kwargs):
         if self.summaryWriter is not None and self.includeSummaries(path):
@@ -137,20 +117,20 @@ class TrainLogger():
                 return True
         return True
 
-    def writeBatchSummaries(self, state: TrainState, batch_num: int, loss: float, R: float, R2: float):
+    def writeBatchSummaries(self, state: TrainState, batch_num: int, loss: float, R: float, R2: float, batch_vars: dict):
         if batch_num % self.summary_period == 0:
             self.writeSummary (loss, path=['batch','loss'], step=batch_num)
-            self.writeSummary (state.last_y_pred, path=['batch','y_pred'], step=batch_num)
-            self.writeSummary (state.last_grads, path=['batch','grad'], step=batch_num)
-            self.writeSummary (state.last_diagnostics, path=['batch','diagnostics'], step=batch_num)
+            self.writeSummary (batch_vars.last_y_pred, path=['batch','y_pred'], step=batch_num)
+            self.writeSummary (batch_vars.last_grads, path=['batch','grad'], step=batch_num)
+            self.writeSummary (batch_vars.last_diagnostics, path=['batch','diagnostics'], step=batch_num)
             self.writeSummary (R, path=['batch','R','all'], step=batch_num)
             self.writeSummary (R2, path=['batch','R2','all'], step=batch_num)
-            self.writeSummary (pearson_r(state.last_pearsonR_moments,keep_features=True), path=['batch','R','by_feature'], step=batch_num)
-            self.writeSummary (r_squared(state.last_pearsonR_moments,keep_features=True), path=['batch','R2','by_feature'], step=batch_num)
+            self.writeSummary (pearson_r(batch_vars.last_pearsonR_moments,keep_features=True), path=['batch','R','by_feature'], step=batch_num)
+            self.writeSummary (r_squared(batch_vars.last_pearsonR_moments,keep_features=True), path=['batch','R2','by_feature'], step=batch_num)
             if state.batch_stats:
                 self.writeSummary (state.batch_stats, path=['batch','batchnorm_stats'], step=batch_num)
             self.writeSummary (state.params, path=['batch','params'], step=batch_num)
-            self.writeSummary (state.last_pearsonR_moments[:,3], path=['batch','l2_outputs'], step=batch_num)
+            self.writeSummary (batch_vars.last_pearsonR_moments[:,3], path=['batch','l2_outputs'], step=batch_num)
         
     def writeEpochSummaries(self, state: TrainState, epoch_num: int, vmetrics: dict, tmetrics: dict):
         self.writeSummary (vmetrics, path=['epoch','vmetrics'], step=epoch_num)
@@ -187,13 +167,8 @@ def train_step (state, loss_fn, x, y, strand_pair, max_shift, revcomp_prng, drop
     (loss, out_vars), grads = loss_value_and_grad (state.params, x, y)
     # create and return new state
     state = state.apply_gradients (grads = grads)
-    state = state.replace (last_grads = grads,
-                            last_diagnostics = out_vars['diagnostics'],
-                            last_losses = out_vars['losses'],
-                            last_pearsonR_moments = out_vars['pearsonR_moments'],
-                            last_y_pred = out_vars['last_y_pred'],
-                            batch_stats = out_vars['batch_stats'])
-    return loss, state
+    state = state.replace (batch_stats = out_vars['batch_stats'])
+    return loss, state, out_vars
 
 def run_training_loop(state: TrainState,
                       tlog: TrainLogger,
@@ -232,8 +207,8 @@ def run_training_loop(state: TrainState,
     logging.warning (f'Initial stats:\n{stats_str(state.vars(),format="{0} mean={2} sd={4} shape={6}")}')
     logging.warning('starting training loop')
     batches = 0
-    epochs = init_epochs = tlog.infer_starting_epoch()
     best_vars = state.vars()
+    init_epochs = state.epoch
     train_eta = ETA(n=max_epochs,limit=max_seconds)
     while True:
         epoch_eta = ETA(n=n_train_batches)
@@ -252,35 +227,35 @@ def run_training_loop(state: TrainState,
             next_batch = i, (x, y)
         
         def process_current_batch():
-            nonlocal current_batch, state, train_loss, n_train_seqs, batches, epochs
+            nonlocal current_batch, state, train_loss, n_train_seqs, batches
             i, (x, y) = current_batch
-            loss, state = train_step_jit (state, loss_fn, x, y, strand_pair, max_shift, revcomp_prng, dropout_prng)
+            loss, state, out_vars = train_step_jit (state, loss_fn, x, y, strand_pair, max_shift, revcomp_prng, dropout_prng)
             batch_size = x.shape[0]
             n_train_seqs = n_train_seqs + batch_size
             train_loss = train_loss + loss * batch_size
             used_gb = psutil.virtual_memory().used / 1024 / 1024 / 1024
-            if tlog.device_prof_dir is not None and epochs < tlog.max_device_prof_epoch and i < tlog.max_device_prof_batch:
-                filename = f"{tlog.device_prof_dir}/train{epochs}-{i}.prof"
+            if tlog.device_prof_dir is not None and state.epoch < tlog.max_device_prof_epoch and i < tlog.max_device_prof_batch:
+                filename = f"{tlog.device_prof_dir}/train{state.epoch}-{i}.prof"
                 logging.warning(f"Saving device memory profile to {filename}")
                 jax.profiler.save_device_memory_profile(filename)
             batches = batches + 1
-            R = pearson_r(state.last_pearsonR_moments)
-            R2 = r_squared(state.last_pearsonR_moments)
+            R = pearson_r(out_vars.last_pearsonR_moments)
+            R2 = r_squared(out_vars.last_pearsonR_moments)
             bsumms = { 'loss': loss, 'R': R, 'R2': R2 }
-            tlog.writeBatchSummaries (state=state, batch_num=batches, **bsumms)
-            path_norms = jax.tree_util.tree_leaves_with_path(jax.tree_map(jnp.linalg.norm, state.last_grads))
+            tlog.writeBatchSummaries (state=state, batch_num=batches, batch_vars=out_vars, **bsumms)
+            path_norms = jax.tree_util.tree_leaves_with_path(jax.tree_map(jnp.linalg.norm, out_vars.last_grads))
             global_norm = jnp.linalg.norm(jnp.array([pn[1] for pn in path_norms]))
             aberrant_norms = "".join([f"\nLarge gradient norm for {'.'.join([k.key if type(k)==jax.tree_util.DictKey else str(k) for k in pn[0]])}: {pn[1]}" for pn in path_norms if pn[1] > tlog.block_clip])
-            logging.warning (f"Epoch {epochs+1} batch {i+1}/{n_train_batches} (size {x.shape[0]}) loss: {loss:.6f}, r: {R:.4f}, r2: {R2:.4f}, norm(grad): {global_norm:.4f}, used {used_gb:.2f} Gb, ETA {epoch_eta(i)}{aberrant_norms}")
+            logging.warning (f"Epoch {state.epoch+1} batch {i+1}/{n_train_batches} (size {x.shape[0]}) loss: {loss:.6f}, r: {R:.4f}, r2: {R2:.4f}, norm(grad): {global_norm:.4f}, used {used_gb:.2f} Gb, ETA {epoch_eta(i)}{aberrant_norms}")
             if tlog.summaries or tlog.verbose:
                 logging.warning (f'Params:\n{stats_str(state.vars(),format="{0} mean={2} sd={4}")}')
-                logging.warning (f'Gradients:\n{stats_str(state.last_grads,format="grad({0}) mean={2} sd={4} l2={1}")}')
-                if state.batch_stats:
-                    logging.warning (f'Batch stats:\n{stats_str(state.batch_stats,format="batch_stats({0}) l2={1}")}')
-                logging.warning (f'Outputs:\n{stats_str(state.last_y_pred,format="output({0}) mean={2} sd={4} l2={1}")}')
-                logging.warning (f'Losses (regularizers):\n{stats_str(state.last_losses,format="losses({0}) {2}")}')
-            if tlog.diagnostics and state.last_diagnostics:
-                logging.warning (f'Diagnostics:\n{leaves_str(state.last_diagnostics)}')
+                logging.warning (f'Gradients:\n{stats_str(out_vars.last_grads,format="grad({0}) mean={2} sd={4} l2={1}")}')
+                if out_vars.batch_stats:
+                    logging.warning (f'Batch stats:\n{stats_str(out_vars.batch_stats,format="batch_stats({0}) l2={1}")}')
+                logging.warning (f'Outputs:\n{stats_str(out_vars.last_y_pred,format="output({0}) mean={2} sd={4} l2={1}")}')
+                logging.warning (f'Losses (regularizers):\n{stats_str(out_vars.last_losses,format="losses({0}) {2}")}')
+            if tlog.diagnostics and out_vars.last_diagnostics:
+                logging.warning (f'Diagnostics:\n{leaves_str(out_vars.last_diagnostics)}')
             if batches == 1:
                 tlog.writeMemoryStats()  # log memory stats at end of first batch
 
@@ -296,12 +271,12 @@ def run_training_loop(state: TrainState,
                 else:
                     process_current_batch()
                     prepare_next_batch()
-#                pr.dump_stats(tlog.log_dir + f"/train{epochs}-{batches}.prof")
+#                pr.dump_stats(tlog.log_dir + f"/train{state.epoch}-{batches}.prof")
                 if use_tracemalloc:
                     snapshot = tracemalloc.take_snapshot()
                     display_top(snapshot,limit=5)
 
-        epochs = epochs + 1
+        state = state.replace (epoch = state.epoch + 1)
         # compute validation loss and metrics
         vmetrics = compute_metrics(state.vars(),valid_iter,n_batches=n_valid_batches,fold_name="validation")
         vmetrics_history.append (vmetrics)
@@ -314,23 +289,23 @@ def run_training_loop(state: TrainState,
         tmetrics_str = ""
         if recompute_train_metrics:
             tmetrics = compute_metrics(state.vars(),train_iter,n_batches=n_train_batches,fold_name="training")
-            tlog.writeEpochSummaries (state=state, epoch_num=epochs, tmetrics=tmetrics, vmetrics=vmetrics)
+            tlog.writeEpochSummaries (state=state, epoch_num=state.epoch, tmetrics=tmetrics, vmetrics=vmetrics)
             tmetrics_str = f"recomputed training {metrics_str(tmetrics)}, "
 
-        logging.warning (f"Epoch {epochs}: time {epoch_eta.lapsed()} (total {train_eta.lapsed()}), running-total training loss={train_loss:.6f}, {tmetrics_str}validation {metrics_str(vmetrics_history[-1])}" +
+        logging.warning (f"Epoch {state.epoch}: time {epoch_eta.lapsed()} (total {train_eta.lapsed()}), running-total training loss={train_loss:.6f}, {tmetrics_str}validation {metrics_str(vmetrics_history[-1])}" +
             (" ...nice" if this_is_best_epoch else f" ...best was after {best_vr_idx+init_epochs+1} epochs"))
 
         tlog.writeMemoryStats()  # log memory stats at end of every epoch
 
-        if max_epochs and epochs >= max_epochs:
+        if max_epochs and state.epoch >= max_epochs:
             logging.warning ("Max epochs reached")
             break
 
         vars = state.vars()
-        tlog.save_vars (vars, epoch=epochs)
+        tlog.save_vars (vars)
         if this_is_best_epoch:
             best_vars = vars
-            tlog.save_vars (best_vars)
+            tlog.save_vars (best_vars, best=True)
         elif len(vmetrics_history) - best_vr_idx > patience + 1:
             logging.warning ("Patience exceeded")
             break
@@ -339,9 +314,9 @@ def run_training_loop(state: TrainState,
             logging.warning (f"Max wall clock time exceeded")
             break
     
-    logging.warning (f"Training finished after {epochs} epochs, {batches} batches, {train_eta.lapsed()} elapsed time")
+    logging.warning (f"Training finished after {state.epoch} epochs, {batches} batches, {train_eta.lapsed()} elapsed time")
 
-    if epochs > 1:
+    if state.epoch > 1:
         tlog.writeMemoryStats()  # log memory stats at end of entire run
 
     return state
