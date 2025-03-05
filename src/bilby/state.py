@@ -240,23 +240,23 @@ def run_training_loop(state: TrainState,
                 logging.warning(f"Saving device memory profile to {filename}")
                 jax.profiler.save_device_memory_profile(filename)
             batches = batches + 1
-            R = pearson_r(out_vars.pearsonR_moments)
-            R2 = r_squared(out_vars.pearsonR_moments)
+            R = pearson_r(out_vars['pearsonR_moments'])
+            R2 = r_squared(out_vars['pearsonR_moments'])
             bsumms = { 'loss': loss, 'R': R, 'R2': R2 }
             tlog.writeBatchSummaries (state=state, batch_num=batches, batch_vars=out_vars, **bsumms)
-            path_norms = jax.tree_util.tree_leaves_with_path(jax.tree_map(jnp.linalg.norm, out_vars.grads))
+            path_norms = jax.tree_util.tree_leaves_with_path(jax.tree_map(jnp.linalg.norm, out_vars['grads']))
             global_norm = jnp.linalg.norm(jnp.array([pn[1] for pn in path_norms]))
             aberrant_norms = "".join([f"\nLarge gradient norm for {'.'.join([k.key if type(k)==jax.tree_util.DictKey else str(k) for k in pn[0]])}: {pn[1]}" for pn in path_norms if pn[1] > tlog.block_clip])
             logging.warning (f"Epoch {state.epoch+1} batch {i+1}/{n_train_batches} (size {x.shape[0]}) loss: {loss:.6f}, r: {R:.4f}, r2: {R2:.4f}, norm(grad): {global_norm:.4f}, used {used_gb:.2f} Gb, ETA {epoch_eta(i)}{aberrant_norms}")
             if tlog.summaries or tlog.verbose:
                 logging.warning (f'Params:\n{stats_str(state.vars()["params"],format="{0} mean={2} sd={4}")}')
-                logging.warning (f'Gradients:\n{stats_str(out_vars.grads,format="grad({0}) mean={2} sd={4} l2={1}")}')
-                if out_vars.batch_stats:
-                    logging.warning (f'Batch stats:\n{stats_str(out_vars.batch_stats,format="batch_stats({0}) l2={1}")}')
-                logging.warning (f'Outputs:\n{stats_str(out_vars.y_pred,format="output({0}) mean={2} sd={4} l2={1}")}')
-                logging.warning (f'Losses (regularizers):\n{stats_str(out_vars.losses,format="losses({0}) {2}")}')
-            if tlog.diagnostics and out_vars.diagnostics:
-                logging.warning (f'Diagnostics:\n{leaves_str(out_vars.diagnostics)}')
+                logging.warning (f'Gradients:\n{stats_str(out_vars["grads"],format="grad({0}) mean={2} sd={4} l2={1}")}')
+                if out_vars['batch_stats']:
+                    logging.warning (f'Batch stats:\n{stats_str(out_vars["batch_stats"],format="batch_stats({0}) l2={1}")}')
+                logging.warning (f'Outputs:\n{stats_str(out_vars["y_pred"],format="output({0}) mean={2} sd={4} l2={1}")}')
+                logging.warning (f'Losses (regularizers):\n{stats_str(out_vars["losses"],format="losses({0}) {2}")}')
+            if tlog.diagnostics and out_vars['diagnostics']:
+                logging.warning (f'Diagnostics:\n{leaves_str(out_vars["diagnostics"])}')
             if batches == 1:
                 tlog.writeMemoryStats()  # log memory stats at end of first batch
 
