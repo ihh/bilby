@@ -39,11 +39,11 @@ class TrainState(train_state.TrainState):
     batch_stats: dict = field(default_factory=dict)
 
     # the following class variables are just for logging/debugging, they don't need to be serialized/deserialized
-    last_y_pred: Any = None
-    last_grads: Any = None
-    last_diagnostics: Any = None
-    last_pearsonR_moments: Any = None
-    last_losses: Any = None
+    last_y_pred: any = None
+    last_grads: any = None
+    last_diagnostics: any = None
+    last_pearsonR_moments: any = None
+    last_losses: any = None
 
     def vars (self):
         return { 'params': self.params,
